@@ -8,9 +8,10 @@ from torchvision import models, transforms
 import numpy as np
 
 # ------------------------------
-# Device
+# Optimize Memory for Render
 # ------------------------------
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+torch.set_num_threads(1)  # Prevent PyTorch from using multiple threads (saves memory)
+device = torch.device("cpu")  # Force CPU on Render free tier
 
 # ------------------------------
 # Dummy Quantum Layer
@@ -22,6 +23,7 @@ class DummyQuantumLayer(nn.Module):
 
     def forward(self, x):
         return torch.tanh(self.fc(x))  # simulate quantum nonlinearity
+
 
 # ------------------------------
 # Feature Extractor (ResNet18)
@@ -61,19 +63,25 @@ class HybridResNetQNN(nn.Module):
         out = self.classifier(q_out)
         return out
 
+
 # ------------------------------
-# Load Model
+# Load Model (Render-friendly + Safe)
 # ------------------------------
 model = HybridResNetQNN(base_model, classical_reducer, quantum_layer, n_qubits, num_classes).to(device)
-
 model_path = "hybrid_resnet_qnn_final.pth"
+
 if os.path.exists(model_path):
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    print(f"✅ Loaded model weights from {model_path}")
+    try:
+        state_dict = torch.load(model_path, map_location=device)
+        model.load_state_dict(state_dict, strict=False)
+        print(f"✅ Model loaded successfully on CPU from {model_path}")
+    except Exception as e:
+        print(f"⚠️ Error loading model: {e}")
 else:
     print(f"⚠️ Warning: model weights not found at {model_path}")
 
 model.eval()
+
 
 # ------------------------------
 # Flask App Setup
@@ -91,9 +99,14 @@ transform = transforms.Compose([
 
 class_names = ["Mild Dementia", "Moderate Dementia", "Non Demented", "Very Mild Demented"]
 
+
+# ------------------------------
+# Routes
+# ------------------------------
 @app.route("/")
 def index():
     return render_template("index.html")
+
 
 @app.route("/predict", methods=["POST"])
 def predict():
@@ -118,5 +131,10 @@ def predict():
                            confidence=confidence,
                            image_path=path)
 
+
+# ------------------------------
+# Render-friendly App Run
+# ------------------------------
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 10000))  # Render gives PORT dynamically
+    app.run(host="0.0.0.0", port=port)
